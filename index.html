@@ -179,9 +179,9 @@
 
   .row-leitura{
     background:var(--panel); border:1px solid var(--line); border-radius:12px;
-    padding:12px 14px; margin-bottom:8px; display:flex; align-items:center; gap:12px;
-    box-shadow:var(--shadow);
+    padding:12px 14px; margin-bottom:8px; box-shadow:var(--shadow);
   }
+  .row-leitura .row-top{display:flex; align-items:center; gap:12px;}
   .row-leitura .apto-badge{
     width:40px; height:40px; border-radius:9px; background:var(--panel-2);
     display:flex; align-items:center; justify-content:center; font-family:'IBM Plex Mono';
@@ -190,7 +190,11 @@
   .row-leitura .info{flex:1; min-width:0;}
   .row-leitura .info .l1{font-family:'IBM Plex Mono'; font-size:14px; font-weight:600;}
   .row-leitura .info .l2{font-size:11.5px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .row-leitura .del{background:none; border:none; color:var(--muted); font-size:18px; cursor:pointer; padding:6px;}
+  .row-leitura .actions{display:flex; gap:2px; flex-shrink:0;}
+  .row-leitura .del, .row-leitura .edt{background:none; border:none; color:var(--muted); font-size:17px; cursor:pointer; padding:6px; border-radius:8px;}
+  .row-leitura .del:active{background:var(--danger-dim); color:var(--danger-strong);}
+  .row-leitura .edt:active{background:var(--blue-dim); color:var(--blue-strong);}
+  .row-leitura .edit-grid{margin-top:12px; padding-top:12px; border-top:1px solid var(--line);}
 
   .empty-state{
     text-align:center; padding:30px 10px; color:var(--muted); font-size:13px;
@@ -635,14 +639,53 @@ function viewCaptura(){
     [...state.leituras].reverse().forEach(l => {
       const row = el(`
         <div class="row-leitura">
-          <div class="apto-badge">${escapeHtml(l.apartamento)}</div>
-          <div class="info">
-            <div class="l1">${escapeHtml(l.leitura||'—')} m³</div>
-            <div class="l2">${escapeHtml(l.medidor||'sem série')} · ${escapeHtml(l.marca||'')}</div>
+          <div class="row-top">
+            <div class="apto-badge">${escapeHtml(l.apartamento)}</div>
+            <div class="info">
+              <div class="l1">${escapeHtml(l.leitura||'—')} m³</div>
+              <div class="l2">${escapeHtml(l.medidor||'sem série')} · ${escapeHtml(l.marca||'')}</div>
+            </div>
+            <div class="actions">
+              <button class="edt" title="Editar">✎</button>
+              <button class="del" title="Excluir">🗑</button>
+            </div>
           </div>
-          <button class="del" title="Excluir">🗑</button>
+          <div class="edit-grid hidden">
+            <label>Apartamento</label>
+            <input type="text" data-f="apartamento" value="${escapeHtml(l.apartamento)}">
+            <label>Leitura (m³)</label>
+            <input type="text" class="mono" data-f="leitura" value="${escapeHtml(l.leitura||'')}">
+            <label>Nº de Série</label>
+            <input type="text" class="mono" data-f="medidor" value="${escapeHtml(l.medidor||'')}">
+            <label>Marca</label>
+            <input type="text" data-f="marca" value="${escapeHtml(l.marca||'')}">
+          </div>
         </div>
       `);
+
+      const editGrid = row.querySelector('.edit-grid');
+      const edtBtn = row.querySelector('.edt');
+      edtBtn.onclick = () => {
+        const abrindo = editGrid.classList.contains('hidden');
+        editGrid.classList.toggle('hidden', !abrindo);
+        edtBtn.textContent = abrindo ? '✓' : '✎';
+      };
+      editGrid.querySelectorAll('input').forEach(inp => {
+        let tm;
+        inp.oninput = () => {
+          clearTimeout(tm);
+          tm = setTimeout(async () => {
+            const campo = inp.dataset.f;
+            const valor = inp.value.trim();
+            await sb.from('leituras').update({ [campo]: valor }).eq('id', l.id);
+            l[campo] = valor;
+            row.querySelector('.apto-badge').textContent = l.apartamento;
+            row.querySelector('.info .l1').textContent = `${l.leitura||'—'} m³`;
+            row.querySelector('.info .l2').textContent = `${l.medidor||'sem série'} · ${l.marca||''}`;
+          }, 500);
+        };
+      });
+
       row.querySelector('.del').onclick = async () => {
         if(!confirm(`Excluir a leitura do apto ${l.apartamento}?`)) return;
         await sb.from('leituras').delete().eq('id', l.id);
