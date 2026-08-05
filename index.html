@@ -660,6 +660,14 @@ function viewCaptura(){
             <input type="text" class="mono" data-f="medidor" value="${escapeHtml(l.medidor||'')}">
             <label>Marca</label>
             <input type="text" data-f="marca" value="${escapeHtml(l.marca||'')}">
+            <label>Corte</label>
+            <div class="corte-toggle">
+              <button data-v="NÃO" class="${(l.corte||'NÃO')==='NÃO'?'active-nao':''}">NÃO</button>
+              <button data-v="SIM" class="${l.corte==='SIM'?'active-sim':''}">SIM CORTE</button>
+            </div>
+            <label>Observação</label>
+            <textarea data-f="observacao" placeholder="Opcional">${escapeHtml(l.observacao||'')}</textarea>
+            ${l.foto_path ? `<a class="foto-link" href="${fotoPublicUrl(l.foto_path)}" target="_blank" rel="noopener" download>🖼️ Ver / baixar foto</a>` : ''}
           </div>
         </div>
       `);
@@ -671,7 +679,7 @@ function viewCaptura(){
         editGrid.classList.toggle('hidden', !abrindo);
         edtBtn.textContent = abrindo ? '✓' : '✎';
       };
-      editGrid.querySelectorAll('input').forEach(inp => {
+      editGrid.querySelectorAll('input[data-f], textarea[data-f]').forEach(inp => {
         let tm;
         inp.oninput = () => {
           clearTimeout(tm);
@@ -686,6 +694,15 @@ function viewCaptura(){
           }, 500);
         };
       });
+      editGrid.querySelectorAll('.corte-toggle button').forEach(b=>{
+        b.onclick = async () => {
+          const v = b.dataset.v;
+          await sb.from('leituras').update({ corte: v }).eq('id', l.id);
+          l.corte = v;
+          editGrid.querySelectorAll('.corte-toggle button').forEach(x=>x.className='');
+          b.className = v==='SIM' ? 'active-sim' : 'active-nao';
+        };
+      });
 
       row.querySelector('.del').onclick = async () => {
         if(!confirm(`Excluir a leitura do apto ${l.apartamento}?`)) return;
@@ -698,9 +715,34 @@ function viewCaptura(){
   }
 
   if(state.leituras.length){
-    const finBtn = el(`<button class="btn btn-teal" style="margin-top:18px;">Revisar apartamentos →</button>`);
-    finBtn.onclick = () => { state.view = 'revisao'; render(); };
-    wrap.appendChild(finBtn);
+    const ordenadas = [...state.leituras].sort((a,b)=> {
+      const na = parseInt(a.apartamento), nb = parseInt(b.apartamento);
+      if(isNaN(na)||isNaN(nb)) return a.apartamento.localeCompare(b.apartamento);
+      return na - nb;
+    });
+
+    const jaFinalizada = s.status === 'finalizada';
+    const finalizarBtn = el(`<button class="btn ${jaFinalizada ? 'btn-secondary' : 'btn-teal'}" style="margin-top:18px;" ${jaFinalizada ? 'disabled' : ''}>${jaFinalizada ? '✓ Edifício finalizado' : '✓ Marcar edifício como finalizado'}</button>`);
+    finalizarBtn.onclick = async () => {
+      if(jaFinalizada) return;
+      if(!confirm('Marcar esse edifício como finalizado?')) return;
+      finalizarBtn.disabled = true; finalizarBtn.textContent = 'Salvando...';
+      const { data, error } = await sb.from('leitura_sessoes').update({ status: 'finalizada' }).eq('id', s.id).select().single();
+      if(error){ showToast('Erro: ' + error.message); finalizarBtn.disabled=false; finalizarBtn.textContent='✓ Marcar edifício como finalizado'; return; }
+      state.sessaoAtual = data;
+      showToast('Edifício marcado como finalizado ✓');
+      render();
+    };
+    wrap.appendChild(finalizarBtn);
+
+    const exportBtn = el(`<button class="btn btn-primary" style="margin-top:10px;">⬇ Baixar planilha (.xlsx)</button>`);
+    exportBtn.onclick = async () => {
+      exportBtn.disabled = true; exportBtn.textContent = 'Gerando...';
+      await exportarXlsx(state.sessaoAtual, ordenadas);
+      exportBtn.disabled = false; exportBtn.textContent = '⬇ Baixar planilha (.xlsx)';
+      showToast('Planilha gerada ✓');
+    };
+    wrap.appendChild(exportBtn);
 
     const fotosBtn = el(`<button class="btn btn-secondary" style="margin-top:10px;">⬇ Baixar todas as fotos (.zip)</button>`);
     fotosBtn.onclick = () => baixarTodasFotos(state.leituras, fotosBtn);
