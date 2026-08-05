@@ -700,6 +700,10 @@ function viewCaptura(){
     const finBtn = el(`<button class="btn btn-teal" style="margin-top:18px;">Finalizar e exportar planilha →</button>`);
     finBtn.onclick = () => { state.view = 'revisao'; render(); };
     wrap.appendChild(finBtn);
+
+    const fotosBtn = el(`<button class="btn btn-secondary" style="margin-top:10px;">⬇ Baixar todas as fotos (.zip)</button>`);
+    fotosBtn.onclick = () => baixarTodasFotos(state.leituras, fotosBtn);
+    wrap.appendChild(fotosBtn);
   }
 
   return wrap;
