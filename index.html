@@ -111,10 +111,16 @@
   .session-item{
     background:var(--panel); border:1px solid var(--line); border-radius:12px;
     padding:13px 14px; margin-bottom:8px; cursor:pointer; box-shadow:var(--shadow);
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
   }
   .session-item:active{background:var(--panel-2);}
   .session-item .name{font-weight:600; font-size:14px;}
   .session-item .meta{font-size:12px; color:var(--muted); margin-top:3px;}
+  .session-item .del{
+    background:none; border:none; color:var(--muted); font-size:17px; cursor:pointer;
+    padding:8px; flex-shrink:0; border-radius:8px;
+  }
+  .session-item .del:active{background:var(--danger-dim); color:var(--danger-strong);}
 
   .hidden{display:none !important;}
 
@@ -263,6 +269,22 @@ function showToast(msg){
   showToast._tm = setTimeout(()=>t.classList.remove('show'), 2200);
 }
 
+async function excluirSessao(s){
+  showToast('Excluindo...');
+  try{
+    const { data: arquivos } = await sb.storage.from(BUCKET).list(s.id);
+    if(arquivos && arquivos.length){
+      const paths = arquivos.map(f => `${s.id}/${f.name}`);
+      await sb.storage.from(BUCKET).remove(paths);
+    }
+  } catch(e){ /* segue mesmo se falhar limpeza de fotos */ }
+
+  const { error } = await sb.from('leitura_sessoes').delete().eq('id', s.id);
+  if(error){ showToast('Erro ao excluir: ' + error.message); return; }
+  showToast('Edifício excluído ✓');
+  await carregarSessoes();
+}
+
 async function carregarSessoes(){
   const { data, error } = await sb.from('leitura_sessoes').select('*').order('created_at', {ascending:false}).limit(20);
   if(!error) state.sessoes = data;
@@ -321,17 +343,25 @@ function viewInicio(){
     state.sessoes.forEach(s => {
       const item = el(`
         <div class="session-item">
-          <div class="name">${escapeHtml(s.cliente || 'Sem nome')}</div>
-          <div class="meta">${escapeHtml(s.endereco || '')} · ${formatDate(s.data_leitura)}
-            <span class="pill ${s.status==='aberta'?'pill-open':'pill-closed'}" style="margin-left:6px;">${s.status==='aberta'?'ABERTA':'FINALIZADA'}</span>
+          <div style="min-width:0; flex:1;">
+            <div class="name">${escapeHtml(s.cliente || 'Sem nome')}</div>
+            <div class="meta">${escapeHtml(s.endereco || '')} · ${formatDate(s.data_leitura)}
+              <span class="pill ${s.status==='aberta'?'pill-open':'pill-closed'}" style="margin-left:6px;">${s.status==='aberta'?'ABERTA':'FINALIZADA'}</span>
+            </div>
           </div>
+          <button class="del" title="Excluir edifício">🗑</button>
         </div>
       `);
-      item.onclick = async () => {
+      item.querySelector('.name').closest('div').onclick = async () => {
         state.sessaoAtual = s;
         await carregarLeituras(s.id);
         state.view = 'captura';
         render();
+      };
+      item.querySelector('.del').onclick = async (e) => {
+        e.stopPropagation();
+        if(!confirm(`Excluir "${s.cliente || 'esta sessão'}" e todas as leituras e fotos dela? Essa ação não pode ser desfeita.`)) return;
+        await excluirSessao(s);
       };
       wrap.appendChild(item);
     });
