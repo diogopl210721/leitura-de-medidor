@@ -698,7 +698,7 @@ function viewCaptura(){
   }
 
   if(state.leituras.length){
-    const finBtn = el(`<button class="btn btn-teal" style="margin-top:18px;">Finalizar e exportar planilha →</button>`);
+    const finBtn = el(`<button class="btn btn-teal" style="margin-top:18px;">Revisar apartamentos →</button>`);
     finBtn.onclick = () => { state.view = 'revisao'; render(); };
     wrap.appendChild(finBtn);
 
@@ -885,7 +885,6 @@ function viewRevisao(){
   exportBtn.onclick = async () => {
     exportBtn.disabled = true; exportBtn.textContent = 'Gerando...';
     await exportarXlsx(state.sessaoAtual, ordenadas);
-    await sb.from('leitura_sessoes').update({ status: 'finalizada' }).eq('id', state.sessaoAtual.id);
     exportBtn.disabled = false; exportBtn.textContent = '⬇ Baixar planilha (.xlsx)';
     showToast('Planilha gerada ✓');
   };
@@ -894,6 +893,20 @@ function viewRevisao(){
   const fotosBtn = el(`<button class="btn btn-secondary" style="margin-top:10px;">⬇ Baixar todas as fotos (.zip)</button>`);
   fotosBtn.onclick = () => baixarTodasFotos(ordenadas, fotosBtn);
   wrap.appendChild(fotosBtn);
+
+  const jaFinalizada = state.sessaoAtual.status === 'finalizada';
+  const finalizarBtn = el(`<button class="btn ${jaFinalizada ? 'btn-secondary' : 'btn-teal'}" style="margin-top:10px;" ${jaFinalizada ? 'disabled' : ''}>${jaFinalizada ? '✓ Edifício finalizado' : '✓ Marcar edifício como finalizado'}</button>`);
+  finalizarBtn.onclick = async () => {
+    if(jaFinalizada) return;
+    if(!confirm('Marcar esse edifício como finalizado? Ele ainda pode ser reaberto e editado se precisar.')) return;
+    finalizarBtn.disabled = true; finalizarBtn.textContent = 'Salvando...';
+    const { data, error } = await sb.from('leitura_sessoes').update({ status: 'finalizada' }).eq('id', state.sessaoAtual.id).select().single();
+    if(error){ showToast('Erro: ' + error.message); finalizarBtn.disabled=false; finalizarBtn.textContent='✓ Marcar edifício como finalizado'; return; }
+    state.sessaoAtual = data;
+    showToast('Edifício marcado como finalizado ✓');
+    render();
+  };
+  wrap.appendChild(finalizarBtn);
 
   return wrap;
 }
