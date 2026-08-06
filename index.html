@@ -7,8 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <style>
   :root{
     --bg:#f6f7f9;
@@ -250,6 +248,19 @@
 <script>
 const SUPABASE_URL = "https://hkaqsrqxvvdzniaeklzd.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhrYXFzcnF4dnZkem5pYWVrbHpkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMjcxOTgsImV4cCI6MjA5OTYwMzE5OH0.9WfRq5e4fEw2KOvYBk40-RdEeNjdqqhLERRiyV9lJMk";
+function loadScriptOnce(url){
+  window.__scriptCache = window.__scriptCache || {};
+  if(window.__scriptCache[url]) return window.__scriptCache[url];
+  window.__scriptCache[url] = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = url;
+    s.onload = resolve;
+    s.onerror = () => { delete window.__scriptCache[url]; reject(new Error('Falha ao carregar ' + url)); };
+    document.head.appendChild(s);
+  });
+  return window.__scriptCache[url];
+}
+
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const BUCKET = "medidores-fotos";
 
@@ -263,6 +274,7 @@ let state = {
   aptoInput: "",
   processando: false,
   editandoSessao: false,
+  abrindoSessao: false,
 };
 
 function el(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstChild; }
@@ -359,8 +371,12 @@ function viewInicio(){
       `);
       item.querySelector('.name').closest('div').onclick = async () => {
         state.sessaoAtual = s;
-        await carregarLeituras(s.id);
         state.view = 'captura';
+        state.leituras = [];
+        state.abrindoSessao = true;
+        render();
+        await carregarLeituras(s.id);
+        state.abrindoSessao = false;
         render();
       };
       item.querySelector('.del').onclick = async (e) => {
@@ -635,7 +651,7 @@ function viewCaptura(){
   wrap.appendChild(listTitle);
 
   if(!state.leituras.length){
-    wrap.appendChild(el(`<div class="empty-state">Nenhuma leitura capturada ainda.</div>`));
+    wrap.appendChild(el(`<div class="empty-state">${state.abrindoSessao ? 'Carregando...' : 'Nenhuma leitura capturada ainda.'}</div>`));
   } else {
     [...state.leituras].reverse().forEach(l => {
       const row = el(`
@@ -704,8 +720,10 @@ function viewCaptura(){
         };
       });
 
-      row.querySelector('.del').onclick = async () => {
+      row.querySelector('.del').onclick = async (e) => {
         if(!confirm(`Excluir a leitura do apto ${l.apartamento}?`)) return;
+        e.target.textContent = '⏳';
+        e.target.disabled = true;
         await sb.from('leituras').delete().eq('id', l.id);
         await carregarLeituras(state.sessaoAtual.id);
         render();
@@ -962,6 +980,8 @@ async function baixarTodasFotos(leituras, btn){
   const comFoto = leituras.filter(l => l.foto_path);
   if(!comFoto.length){ showToast('Nenhuma foto pra baixar nessa sessão'); return; }
   btn.disabled = true;
+  btn.textContent = 'Preparando...';
+  await loadScriptOnce('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
   const zip = new JSZip();
   let ok = 0;
   for(const l of comFoto){
@@ -989,40 +1009,124 @@ async function baixarTodasFotos(leituras, btn){
   showToast(`${ok} foto(s) baixadas ✓`);
 }
 
-function excelDate(dateStr){
-  if(!dateStr) return '';
-  const d = new Date(dateStr + 'T00:00:00');
-  return d;
+let logoBase64Cache = null;
+async function getLogoBase64(){
+  if(logoBase64Cache) return logoBase64Cache;
+  const res = await fetch('./cabecalho-logos.png');
+  const blob = await res.blob();
+  logoBase64Cache = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result.split(',')[1]);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+  return logoBase64Cache;
 }
 
 async function exportarXlsx(s, leituras){
-  const rows = [];
-  rows.push([]);
-  rows.push([]);
-  rows.push([]);
-  rows.push([null, 'Cliente:', s.cliente || '']);
-  rows.push([null, 'Cod.:', s.codigo || '', null, 'Data Leitura:', excelDate(s.data_leitura)]);
-  rows.push([null, 'Representante:', s.representante || '', null, 'Telefone:', s.telefone || '']);
-  rows.push([null, 'Endereço:', s.endereco || '']);
-  rows.push([]);
-  rows.push([null, 'Nº Apartamento', 'Leitura', 'Medidor', 'Corte', 'Observação']);
-  leituras.forEach(l => {
-    rows.push([null, l.apartamento, l.leitura, l.medidor, l.corte || 'NÃO', l.observacao || '']);
+  await loadScriptOnce('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
+
+  const NAVY = 'FF1F2A44', BLUE = 'FF2563EB', LIGHT = 'FFEFF3FA', WHITE = 'FFFFFFFF';
+  const GREY_TXT = 'FF444444', VAL_TXT = 'FF111111', BORDER_C = 'FFC9D2E0', RED = 'FFB91C1C';
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('LEITURA E CORTE', {
+    views: [{ showGridLines: false }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 1 }
   });
-  rows.push([]);
+
+  ws.getColumn(1).width = 3;
+  ws.getColumn(2).width = 16;
+  ws.getColumn(3).width = 30;
+  ws.getColumn(4).width = 16;
+  ws.getColumn(5).width = 10;
+  ws.getColumn(6).width = 36;
+
+  const thin = { style: 'thin', color: { argb: BORDER_C } };
+  const borderAll = { top: thin, left: thin, bottom: thin, right: thin };
+  const labelFont = { bold: true, size: 10.5, color: { argb: GREY_TXT }, name: 'Calibri' };
+  const valueFont = { bold: false, size: 10.5, color: { argb: VAL_TXT }, name: 'Calibri' };
+  const thFont = { bold: true, size: 10.5, color: { argb: WHITE }, name: 'Calibri' };
+  const titleFont = { bold: true, size: 14, color: { argb: NAVY }, name: 'Calibri' };
+
+  // logo
+  try{
+    const base64 = await getLogoBase64();
+    const imgId = wb.addImage({ base64, extension: 'png' });
+    const imgW = 420, imgH = 109;
+    ws.getRow(1).height = imgH * 0.75;
+    ws.addImage(imgId, { tl: { col: 1, row: 0 }, ext: { width: imgW, height: imgH } });
+  } catch(e){ /* segue sem logo se falhar o fetch */ }
+
+  let row = 3;
+  ws.mergeCells(row, 2, row, 6);
+  ws.getCell(row, 2).value = 'RELATÓRIO DE LEITURA';
+  ws.getCell(row, 2).font = titleFont;
+  row += 2;
+
+  function field(r, col, label, value){
+    ws.getCell(r, col).value = label;
+    ws.getCell(r, col).font = labelFont;
+    ws.getCell(r, col + 1).value = value;
+    ws.getCell(r, col + 1).font = valueFont;
+  }
+  field(row, 2, 'Cliente:', s.cliente || ''); row++;
+  field(row, 2, 'Cód.:', s.codigo || '—'); field(row, 4, 'Data Leitura:', formatDate(s.data_leitura)); row++;
+  field(row, 2, 'Representante:', s.representante || ''); field(row, 4, 'Telefone:', s.telefone || ''); row++;
+  field(row, 2, 'Endereço:', s.endereco || ''); row += 2;
+
+  const headers = ['Nº Apartamento', 'Leitura', 'Medidor', 'Corte', 'Observação'];
+  const headerRow = row;
+  headers.forEach((h, i) => {
+    const c = ws.getCell(headerRow, 2 + i);
+    c.value = h;
+    c.font = thFont;
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+    c.border = borderAll;
+  });
+  ws.getRow(headerRow).height = 22;
+  row++;
+
+  leituras.forEach((l, idx) => {
+    const vals = [l.apartamento, l.leitura, l.medidor, l.corte || 'NÃO', l.observacao || ''];
+    vals.forEach((val, i) => {
+      const c = ws.getCell(row, 2 + i);
+      c.value = val;
+      c.font = (i === 3 && val === 'SIM') ? { bold: true, size: 10.5, color: { argb: RED } } : valueFont;
+      c.border = borderAll;
+      c.alignment = { horizontal: i !== 4 ? 'center' : 'left', vertical: 'middle' };
+      if(idx % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LIGHT } };
+    });
+    row++;
+  });
+
+  row++;
   if(s.observacao_geral){
-    rows.push([`Obs: ${s.observacao_geral}`]);
+    ws.getCell(row, 2).value = 'Obs:';
+    ws.getCell(row, 2).font = labelFont;
+    ws.getCell(row, 3).value = s.observacao_geral;
+    ws.getCell(row, 3).font = valueFont;
   }
 
-  const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [ {wch:2}, {wch:16}, {wch:34}, {wch:16}, {wch:10}, {wch:30} ];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'LEITURA E CORTE');
-  const fname = `Leitura_${(s.cliente||'sessao').replace(/[^a-z0-9]+/gi,'_').slice(0,40)}_${s.data_leitura||''}.xlsx`;
-  XLSX.writeFile(wb, fname);
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Leitura_${(s.cliente||'sessao').replace(/[^a-z0-9]+/gi,'_').slice(0,40)}_${s.data_leitura||''}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // init
+document.getElementById('app').innerHTML = `
+  <div style="padding:60px 0; text-align:center; color:#6b7280; font-size:13.5px;">
+    Carregando sessões...
+  </div>
+`;
 carregarSessoes();
 </script>
 </body>
