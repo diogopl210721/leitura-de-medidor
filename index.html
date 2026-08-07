@@ -530,6 +530,7 @@ function viewNovaSessao(){
 // ---------- CAPTURA ----------
 function viewCaptura(){
   const wrap = el(`<div></div>`);
+  const s = state.sessaoAtual;
   const back = el(`<button class="back-link">← Sessões</button>`);
   back.onclick = () => { state.view = 'inicio'; state.fotoAtual=null; state.extracao=null; carregarSessoes(); };
   wrap.appendChild(back);
