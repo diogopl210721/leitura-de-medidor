@@ -369,7 +369,7 @@ function viewInicio(){
           <button class="del" title="Excluir edifício">🗑</button>
         </div>
       `);
-      item.querySelector('.name').closest('div').onclick = async () => {
+      item.onclick = async () => {
         state.sessaoAtual = s;
         state.view = 'captura';
         state.leituras = [];
