@@ -261,6 +261,40 @@ function loadScriptOnce(url){
   return window.__scriptCache[url];
 }
 
+function mensagemErroAmigavel(err){
+  const msg = (err && (err.message || String(err))) || '';
+  if(/load failed|failed to fetch|network|fetch/i.test(msg)){
+    return 'Falha de conexão. Verifique o sinal e tente novamente.';
+  }
+  return msg;
+}
+
+async function withRetry(fn, tentativas = 3){
+  let ultimoErro;
+  for(let i = 0; i < tentativas; i++){
+    try{
+      const resultado = await fn();
+      if(resultado && resultado.error){
+        const msg = resultado.error.message || '';
+        if(/load failed|failed to fetch|network/i.test(msg) && i < tentativas - 1){
+          ultimoErro = resultado.error;
+          await new Promise(r => setTimeout(r, 600 * (i + 1)));
+          continue;
+        }
+      }
+      return resultado;
+    } catch(e){
+      ultimoErro = e;
+      if(i < tentativas - 1){
+        await new Promise(r => setTimeout(r, 600 * (i + 1)));
+        continue;
+      }
+      return { data: null, error: e };
+    }
+  }
+  return { data: null, error: ultimoErro };
+}
+
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const BUCKET = "medidores-fotos";
 
@@ -303,14 +337,16 @@ async function excluirSessao(s){
 }
 
 async function carregarSessoes(){
-  const { data, error } = await sb.from('leitura_sessoes').select('*').order('created_at', {ascending:false}).limit(20);
+  const { data, error } = await withRetry(() => sb.from('leitura_sessoes').select('*').order('created_at', {ascending:false}).limit(20));
   if(!error) state.sessoes = data;
+  else showToast('Erro ao carregar sessões: ' + mensagemErroAmigavel(error));
   render();
 }
 
 async function carregarLeituras(sessaoId){
-  const { data, error } = await sb.from('leituras').select('*').eq('sessao_id', sessaoId).order('created_at', {ascending:true});
+  const { data, error } = await withRetry(() => sb.from('leituras').select('*').eq('sessao_id', sessaoId).order('created_at', {ascending:true}));
   if(!error) state.leituras = data;
+  else showToast('Erro ao carregar leituras: ' + mensagemErroAmigavel(error));
 }
 
 function render(){
@@ -516,9 +552,9 @@ function viewNovaSessao(){
       observacao_geral: card.querySelector('#f_obs').value.trim() || null,
       status: 'aberta'
     };
-    const { data, error } = await sb.from('leitura_sessoes').insert(payload).select().single();
+    const { data, error } = await withRetry(() => sb.from('leitura_sessoes').insert(payload).select().single());
     btn.disabled = false; btn.textContent = 'Iniciar captura';
-    if(error){ showToast('Erro ao salvar: ' + error.message); return; }
+    if(error){ showToast('Erro ao salvar: ' + mensagemErroAmigavel(error)); return; }
     state.sessaoAtual = data;
     state.leituras = [];
     state.view = 'captura';
@@ -632,7 +668,12 @@ function viewCaptura(){
         const retryBtn = el(`<button class="btn btn-secondary">Tirar outra</button>`);
         retryBtn.onclick = () => { state.fotoAtual=null; state.extracao=null; render(); };
         const confirmBtn = el(`<button class="btn btn-primary">✓ Confirmar e salvar</button>`);
-        confirmBtn.onclick = () => confirmarLeitura(readout.querySelector('#ed_serie').value, readout.querySelector('#ed_leitura').value);
+        confirmBtn.onclick = () => {
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = 'Salvando...';
+          confirmarLeitura(readout.querySelector('#ed_serie').value, readout.querySelector('#ed_leitura').value)
+            .finally(() => { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Confirmar e salvar'; });
+        };
         btnRow.appendChild(retryBtn);
         btnRow.appendChild(confirmBtn);
         card.appendChild(btnRow);
@@ -822,8 +863,8 @@ async function confirmarLeitura(numeroSerie, leitura){
   const s = state.sessaoAtual;
   const path = `${s.id}/${apto}_${Date.now()}.jpg`;
   const blob = await (await fetch(state.fotoAtual.previewUrl)).blob();
-  const { error: upErr } = await sb.storage.from(BUCKET).upload(path, blob, { contentType: 'image/jpeg' });
-  if(upErr){ showToast('Erro ao enviar foto: ' + upErr.message); return; }
+  const { error: upErr } = await withRetry(() => sb.storage.from(BUCKET).upload(path, blob, { contentType: 'image/jpeg' }));
+  if(upErr){ showToast('Erro ao enviar foto: ' + mensagemErroAmigavel(upErr)); return; }
 
   const payload = {
     sessao_id: s.id,
@@ -834,8 +875,8 @@ async function confirmarLeitura(numeroSerie, leitura){
     foto_path: path,
     corte: 'NÃO',
   };
-  const { error } = await sb.from('leituras').insert(payload);
-  if(error){ showToast('Erro ao salvar: ' + error.message); return; }
+  const { error } = await withRetry(() => sb.from('leituras').insert(payload));
+  if(error){ showToast('Erro ao salvar: ' + mensagemErroAmigavel(error)); return; }
 
   showToast(`Apto ${apto} salvo ✓`);
   state.fotoAtual = null;
