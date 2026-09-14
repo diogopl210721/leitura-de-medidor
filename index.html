@@ -306,6 +306,7 @@ let state = {
   fotoAtual: null,       // { base64, mediaType, previewUrl }
   extracao: null,        // { numero_serie, leitura, marca, status_foto, motivo }
   aptoInput: "",
+  blocoInput: "",
   processando: false,
   editandoSessao: false,
   abrindoSessao: false,
@@ -577,6 +578,10 @@ function viewCaptura(){
 
   const aptoRow = el(`
     <div class="apto-row">
+      <div style="flex:0 0 38%;">
+        <label>Bloco / Torre</label>
+        <input type="text" id="f_bloco" placeholder="Ex: A" value="${escapeHtml(state.blocoInput)}">
+      </div>
       <div>
         <label>Nº do apartamento / unidade</label>
         <input type="text" id="f_apto" placeholder="Ex: 41" inputmode="numeric" value="${escapeHtml(state.aptoInput)}">
@@ -585,6 +590,8 @@ function viewCaptura(){
   `);
   card.appendChild(aptoRow);
 
+  const blocoField = aptoRow.querySelector('#f_bloco');
+  blocoField.oninput = () => { state.blocoInput = blocoField.value; };
   const aptoField = aptoRow.querySelector('#f_apto');
   aptoField.oninput = () => { state.aptoInput = aptoField.value; };
 
@@ -699,7 +706,7 @@ function viewCaptura(){
       const row = el(`
         <div class="row-leitura">
           <div class="row-top">
-            <div class="apto-badge">${escapeHtml(l.apartamento)}</div>
+            <div class="apto-badge">${l.bloco ? escapeHtml(l.bloco)+'-' : ''}${escapeHtml(l.apartamento)}</div>
             <div class="info">
               <div class="l1">${escapeHtml(l.leitura||'—')} m³</div>
               <div class="l2">${escapeHtml(l.medidor||'sem série')} · ${escapeHtml(l.marca||'')}</div>
@@ -710,6 +717,8 @@ function viewCaptura(){
             </div>
           </div>
           <div class="edit-grid hidden">
+            <label>Bloco / Torre</label>
+            <input type="text" data-f="bloco" value="${escapeHtml(l.bloco||'')}">
             <label>Apartamento</label>
             <input type="text" data-f="apartamento" value="${escapeHtml(l.apartamento)}">
             <label>Leitura (m³)</label>
@@ -746,7 +755,7 @@ function viewCaptura(){
             const valor = inp.value.trim();
             await sb.from('leituras').update({ [campo]: valor }).eq('id', l.id);
             l[campo] = valor;
-            row.querySelector('.apto-badge').textContent = l.apartamento;
+            row.querySelector('.apto-badge').textContent = (l.bloco ? l.bloco+'-' : '') + l.apartamento;
             row.querySelector('.info .l1').textContent = `${l.leitura||'—'} m³`;
             row.querySelector('.info .l2').textContent = `${l.medidor||'sem série'} · ${l.marca||''}`;
           }, 500);
@@ -860,6 +869,7 @@ async function processarFoto(){
 
 async function confirmarLeitura(numeroSerie, leitura){
   const apto = state.aptoInput.trim();
+  const bloco = state.blocoInput.trim();
   const s = state.sessaoAtual;
   const path = `${s.id}/${apto}_${Date.now()}.jpg`;
   const blob = await (await fetch(state.fotoAtual.previewUrl)).blob();
@@ -869,6 +879,7 @@ async function confirmarLeitura(numeroSerie, leitura){
   const payload = {
     sessao_id: s.id,
     apartamento: apto,
+    bloco: bloco || null,
     leitura: leitura.trim(),
     medidor: numeroSerie.trim(),
     marca: state.extracao.marca || null,
@@ -878,7 +889,7 @@ async function confirmarLeitura(numeroSerie, leitura){
   const { error } = await withRetry(() => sb.from('leituras').insert(payload));
   if(error){ showToast('Erro ao salvar: ' + mensagemErroAmigavel(error)); return; }
 
-  showToast(`Apto ${apto} salvo ✓`);
+  showToast(`${bloco ? 'Bloco ' + bloco + ' - ' : ''}Apto ${apto} salvo ✓`);
   state.fotoAtual = null;
   state.extracao = null;
   state.aptoInput = '';
@@ -1078,11 +1089,12 @@ async function exportarXlsx(s, leituras){
   });
 
   ws.getColumn(1).width = 3;
-  ws.getColumn(2).width = 16;
-  ws.getColumn(3).width = 30;
+  ws.getColumn(2).width = 10;
+  ws.getColumn(3).width = 14;
   ws.getColumn(4).width = 16;
-  ws.getColumn(5).width = 10;
-  ws.getColumn(6).width = 36;
+  ws.getColumn(5).width = 16;
+  ws.getColumn(6).width = 10;
+  ws.getColumn(7).width = 34;
 
   const thin = { style: 'thin', color: { argb: BORDER_C } };
   const borderAll = { top: thin, left: thin, bottom: thin, right: thin };
@@ -1101,7 +1113,7 @@ async function exportarXlsx(s, leituras){
   } catch(e){ /* segue sem logo se falhar o fetch */ }
 
   let row = 3;
-  ws.mergeCells(row, 2, row, 6);
+  ws.mergeCells(row, 2, row, 7);
   ws.getCell(row, 2).value = 'RELATÓRIO DE LEITURA';
   ws.getCell(row, 2).font = titleFont;
   row += 2;
@@ -1117,7 +1129,7 @@ async function exportarXlsx(s, leituras){
   field(row, 2, 'Representante:', s.representante || ''); field(row, 4, 'Telefone:', s.telefone || ''); row++;
   field(row, 2, 'Endereço:', s.endereco || ''); row += 2;
 
-  const headers = ['Nº Apartamento', 'Leitura', 'Medidor', 'Corte', 'Observação'];
+  const headers = ['Bloco', 'Nº Apartamento', 'Leitura', 'Medidor', 'Corte', 'Observação'];
   const headerRow = row;
   headers.forEach((h, i) => {
     const c = ws.getCell(headerRow, 2 + i);
@@ -1131,13 +1143,13 @@ async function exportarXlsx(s, leituras){
   row++;
 
   leituras.forEach((l, idx) => {
-    const vals = [l.apartamento, l.leitura, l.medidor, l.corte || 'NÃO', l.observacao || ''];
+    const vals = [l.bloco || '', l.apartamento, l.leitura, l.medidor, l.corte || 'NÃO', l.observacao || ''];
     vals.forEach((val, i) => {
       const c = ws.getCell(row, 2 + i);
       c.value = val;
-      c.font = (i === 3 && val === 'SIM') ? { bold: true, size: 10.5, color: { argb: RED } } : valueFont;
+      c.font = (i === 4 && val === 'SIM') ? { bold: true, size: 10.5, color: { argb: RED } } : valueFont;
       c.border = borderAll;
-      c.alignment = { horizontal: i !== 4 ? 'center' : 'left', vertical: 'middle' };
+      c.alignment = { horizontal: i !== 5 ? 'center' : 'left', vertical: 'middle' };
       if(idx % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LIGHT } };
     });
     row++;
